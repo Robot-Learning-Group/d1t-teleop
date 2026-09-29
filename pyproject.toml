@@ -1,0 +1,29 @@
+[project]
+name = "d1t-teleop"
+version = "0.0.1"
+description = "GELLO teleoperation for Unitree D1-T"
+# cyclonedds==0.10.2 (pinned by unitree_sdk2py) ships a prebuilt wheel only up to
+# cp310. On other versions it has to be built against a local CycloneDDS C install.
+requires-python = "==3.10.*"
+dependencies = [
+    "numpy",
+    "tyro",
+    "pyzmq",
+    "termcolor",
+    "cyclonedds==0.10.2",
+    "gello",
+    "unitree-sdk2py",
+    "dynamixel-sdk",
+]
+
+[tool.uv.sources]
+gello = { path = "third_party/gello_software", editable = true }
+unitree-sdk2py = { path = "third_party/unitree_sdk2_python", editable = true }
+dynamixel-sdk = { path = "third_party/gello_software/third_party/DynamixelSDK/python", editable = true }
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["d1t_teleop*"]
