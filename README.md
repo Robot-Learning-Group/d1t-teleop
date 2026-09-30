@@ -64,7 +64,7 @@ flowchart LR
     end
 
     L -- "USB<br/>U2D2" --> A
-    A -- "ZMQ" --> R
+    A -- "関数呼び出し<br/>teleop.py" --> R
     R -- "DDS<br/>Ethernet" --> D
     D -- "UART<br/>115200bps" --> S
 ```
