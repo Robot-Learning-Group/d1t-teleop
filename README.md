@@ -52,17 +52,21 @@ vendor/          D1-T から scp したもの（D1 上で変更する前の元�
 ## 構成
 
 ```mermaid
-flowchart TD
-    L["自作GELLOリーダー<br/>(Dynamixel, D1-Tの2/3スケール)"]
-    A["GelloAgent<br/>(gello_software, Python)"]
-    R["D1TRobot<br/>(このレポジトリで実装, Python)"]
-    D["D1-T 内蔵Linuxボード<br/>(marm_* サービス)"]
-    S["FashionStar サーボ ×7"]
+flowchart LR
+    L["GELLOリーダー<br/>Dynamixel, 2/3スケール"]
+    subgraph PC["PC (Python)"]
+        A["GelloAgent<br/>gello_software"]
+        R["D1TRobot<br/>このレポジトリ"]
+    end
+    subgraph D1["D1-T"]
+        D["内蔵Linuxボード<br/>marm_* サービス"]
+        S["FashionStar<br/>サーボ ×7"]
+    end
 
-    L -- "USB (U2D2)" --> A
+    L -- "USB<br/>U2D2" --> A
     A -- "ZMQ" --> R
-    R -- "DDS (CycloneDDS / unitree_sdk2_python)<br/>Ethernet" --> D
-    D -- "UART 115200bps" --> S
+    R -- "DDS<br/>Ethernet" --> D
+    D -- "UART<br/>115200bps" --> S
 ```
 
 - 2/3スケールでも問題なし（GELLOは関節角をそのまま写すだけ）。必要なのは `joint_offsets` / `joint_signs` のキャリブレーションのみ
