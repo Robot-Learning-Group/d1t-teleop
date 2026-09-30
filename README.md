@@ -41,8 +41,8 @@ logs/            cmd_test.py のログ（git管理外）
 third_party/
   gello_software/        submodule
   unitree_sdk2_python/   submodule
-vendor/          D1-T から scp したソース（git管理外）
-  marm_code/                 ドライバ（ROS なし、unitree_sdk2 C++ + CycloneDDS）。※D1 上で変更する前の元ソース
+vendor/          D1-T から scp したもの（D1 上で変更する前の元の状態）
+  marm_code/                 ドライバ（ROS なし、unitree_sdk2 C++ + CycloneDDS）。build/ は元の marm_controller_node のみ
   fashionstar-uart-servo-cpp/ サーボのシリアル通信ライブラリ
   autoStart*.sh              各ノードの起動スクリプト
 ```
@@ -92,7 +92,7 @@ flowchart TD
 | 項目 | 値 |
 |---|---|
 | D1-T の IP | `192.168.123.100` |
-| ログイン | `ssh ubuntu@192.168.123.100`（パスワードは別途共有） |
+| ログイン | `ssh ubuntu@192.168.123.100`（パスワード `123`） |
 | sudo | パスワード不要（`/etc/rc.local` で sudo に setuid を付けている） |
 | PC 側 | 同じ `192.168.123.0/24` に置く。Mac では `en10`（`192.168.123.111`） |
 | DDS | domain 0。D1 側は NIC 指定なしの `Init(0)`、PC 側は `ChannelFactoryInitialize(0, "<NIC名>")` |

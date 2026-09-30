@@ -1,4 +1,8 @@
-vendor/
+# vendor/: keep sources and the original marm_controller_node binary (for reverting the D1 patch), not build output
+vendor/marm_code/build/*
+!vendor/marm_code/build/marm_controller_node
+vendor/fashionstar-uart-servo-cpp/**/build/
+vendor/**/.ipynb_checkpoints/
 __pycache__/
 *.pyc
 .venv/
