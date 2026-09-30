@@ -11,6 +11,8 @@ Dry-run by default: reads the leader and prints the commands it would send.
     # live
     uv run python scripts/teleop.py --gello-port ... --nic enp3s0 --use-d1 --live
 
+Commands are sent once per D1 feedback message (30 Hz), see D1TRobot.
+
 We don't use gello's experiments/run_env.py: on startup it moves the follower to
 a hard-coded UR pose, which would also trigger for a 7-dof D1-T.
 """
@@ -38,7 +40,6 @@ class Args:
     live: bool = False
     """Actually publish commands. Requires --use-d1."""
 
-    hz: float = 100.0
     sync_speed_deg: float = 20.0
     """Joint speed [deg/s] used to bring the follower to the leader pose at start."""
 
@@ -47,12 +48,17 @@ def main(args: Args) -> None:
     assert not (args.live and not args.use_d1), "--live requires --use-d1"
 
     agent = GelloAgent(port=args.gello_port, dynamixel_config=LEADER_CONFIG)
+    # gello silently falls back to a fake driver (all zeros) if the port can't be
+    # opened, which would command the D1 to the zero pose. Refuse to run then.
+    if getattr(agent._robot._driver, "_is_fake", False):
+        raise RuntimeError(f"Could not open the GELLO on {args.gello_port} (fake driver in use).")
     leader = agent.act({})
     print("leader [deg]:", np.round(np.rad2deg(leader[:6]), 1), "gripper:", round(leader[6], 2))
 
+    cfg = D1TConfig(nic=args.nic)
     robot = None
     if args.use_d1:
-        robot = D1TRobot(D1TConfig(nic=args.nic), dry_run=not args.live)
+        robot = D1TRobot(cfg, dry_run=not args.live)
         t0 = time.time()
         while not robot.has_state():
             if time.time() - t0 > 3.0:
@@ -63,27 +69,25 @@ def main(args: Args) -> None:
 
         # Bring the follower to the leader pose slowly.
         delta = np.abs(leader[:6] - follower[:6]).max()
-        steps = max(1, int(np.rad2deg(delta) / args.sync_speed_deg * args.hz))
-        print(f"syncing: max diff {np.rad2deg(delta):.1f} deg over {steps / args.hz:.1f} s")
+        steps = max(1, int(np.rad2deg(delta) / args.sync_speed_deg * cfg.feedback_hz))
+        print(f"syncing: max diff {np.rad2deg(delta):.1f} deg over {steps / cfg.feedback_hz:.1f} s")
         robot.reset_command_history()
         for q in np.linspace(follower, leader, steps):
+            robot.wait_for_state()
             robot.command_joint_state(q)
-            time.sleep(1.0 / args.hz)
 
     print("teleop running (Ctrl-C to stop)")
-    period = 1.0 / args.hz
-    next_t = time.time()
     try:
         while True:
+            # Read the leader first so the command goes out right after the feedback.
             q = agent.act({})
             if robot is not None:
-                robot.command_joint_state(q)
-                if robot.state_age() > 0.5:
+                if not robot.wait_for_state():
                     print(f"[warn] D1 state is {robot.state_age():.2f} s old")
+                robot.command_joint_state(q)
             else:
                 print("leader [deg]:", np.round(np.rad2deg(q[:6]), 1), "gripper:", round(q[6], 2))
-            next_t += period
-            time.sleep(max(0.0, next_t - time.time()))
+                time.sleep(1.0 / cfg.feedback_hz)
     except KeyboardInterrupt:
         print("stopped")
 

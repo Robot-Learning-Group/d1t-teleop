@@ -2,55 +2,67 @@
 
 [GELLO](https://github.com/wuphilipp/gello_software) を使って Unitree D1-T をテレオペするためのレポジトリ。
 
-> 状態: **環境構築済み・コードの雛形あり・実機未接続**（2026-09-29 時点）。次にやることは [明日の作業](#明日の作業) を参照。
-
 ---
 
 ## 環境構築
 ```bash
 git submodule update --init --recursive
+export UV_PROJECT_ENVIRONMENT=$HOME/.venvs/d1t-teleop   # macOS: ~/.zshrc に書く。Desktop 以下の .venv は .pth が hidden 扱いされ import できない
 uv sync
 ```
 
-実行は基本 `uv run python ...`。
+## 使い方
 
-- **Python は 3.10 固定**。unitree_sdk2py が要求する `cyclonedds==0.10.2` のビルド済み wheel（CycloneDDS 本体同梱）が cp310 までしか無いため。3.11 以上だと CycloneDDS (C) を自前ビルドして `CYCLONEDDS_HOME` を指定する必要がある
-- gello / unitree_sdk2py / DynamixelSDK は submodule を `[tool.uv.sources]` で editable 参照している
-- gello_software の `requirements.txt` は UR / xArm / RealSense 等まで入る重い構成なので入れていない。必要になったら `pyproject.toml` に個別に足す
+```bash
+uv run python scripts/limp.py --nic en10        # 必要なら D1 を脱力させて手でデフォルト姿勢に戻す
+uv run python scripts/teleop.py --gello-port /dev/cu.usbserial-FTAAMM7U --nic en10 --use-d1          # dry-run
+uv run python scripts/teleop.py --gello-port /dev/cu.usbserial-FTAAMM7U --nic en10 --use-d1 --live   # 実機
+```
+
+- 起動時に D1 をリーダーの姿勢まで 20°/s で動かすので、リーダーを D1 の姿勢に合わせてから起動する
+- `[warn] D1 state is ... old` が出たら止める
+- ⚠️ 実機を動かすときは、周りに何もなく非常停止（電源）に手が届く状態で
 
 ## ファイル構成
 
 ```
 d1t_teleop/
-  msg.py         D1 の DDS 型（ArmString_, PubServoInfo_）を Python に移植 ※型は要確認
-  config.py      リーダー(GELLO)のキャリブ値、D1 の関節リミット・グリッパ範囲 ※TODO多数
-  d1t_robot.py   D1TRobot: GELLO の Robot プロトコル実装（dry-run 既定）
+  msg.py         D1 の DDS 型（ArmString_, PubServoInfo_, SetServoAngle_, SetServoDumping_）を Python に移植
+  config.py      リーダー(GELLO)のキャリブ値、D1 の関節リミット・グリッパ範囲・送信設定
+  d1t_robot.py   D1TRobot: GELLO の Robot プロトコル実装。送信は direct + sync（dry-run 既定）
 scripts/
-  probe_d1.py    読み取り専用。D1 の状態トピックの受信周期と値を表示
+  probe_d1.py    読み取り専用。D1 の状態トピックの受信周期（平均/最小/最大間隔）と値を表示
+  read_leader.py GELLO リーダーの生の角度を表示（接続・ID・回転方向の確認用）
+  compare_live.py D1 とリーダーの角度を並べて表示するウィンドウ（joint_signs 決め用、読み取り専用）
+  leader_offset.py リーダーのオフセット計算（gello_get_offset.py の ID 0 始まり版）
+  cmd_test.py    1関節だけ動かして追従・遅れ・フィードバックの乱れを測る（dry-run 既定、--live で実送信）
   teleop.py      GELLO → D1 テレオペ（dry-run 既定、--live で実送信）
+logs/            cmd_test.py のログ（git管理外）
 third_party/
   gello_software/        submodule
   unitree_sdk2_python/   submodule
-vendor/          Unitree のソース置き場（git管理外）
+vendor/          D1-T から scp したソース（git管理外）
+  marm_code/                 ドライバ（ROS なし、unitree_sdk2 C++ + CycloneDDS）。※D1 上で変更する前の元ソース
+  fashionstar-uart-servo-cpp/ サーボのシリアル通信ライブラリ
+  autoStart*.sh              各ノードの起動スクリプト
 ```
-
-コード中の `TODO(verify)` は、D1 の SDK / `marm_code` を見て確定させる箇所。
 
 ---
 
 ## 構成
 
-```
-[自作GELLOリーダー (Dynamixel, D1-Tの2/3スケール)]
-        │ USB (U2D2)
-        ▼
-  GelloAgent (gello_software, Python)
-        │ ZMQ
-        ▼
-  D1TRobot (このレポジトリで実装, Python)
-        │ DDS (CycloneDDS / unitree_sdk2_python)  ── Ethernet
-        ▼
-  D1-T 内蔵Linuxボード (marm_* サービス) → サーボ
+```mermaid
+flowchart TD
+    L["自作GELLOリーダー<br/>(Dynamixel, D1-Tの2/3スケール)"]
+    A["GelloAgent<br/>(gello_software, Python)"]
+    R["D1TRobot<br/>(このレポジトリで実装, Python)"]
+    D["D1-T 内蔵Linuxボード<br/>(marm_* サービス)"]
+    S["FashionStar サーボ ×7"]
+
+    L -- "USB (U2D2)" --> A
+    A -- "ZMQ" --> R
+    R -- "DDS (CycloneDDS / unitree_sdk2_python)<br/>Ethernet" --> D
+    D -- "UART 115200bps" --> S
 ```
 
 - 2/3スケールでも問題なし（GELLOは関節角をそのまま写すだけ）。必要なのは `joint_offsets` / `joint_signs` のキャリブレーションのみ
@@ -65,168 +77,197 @@ vendor/          Unitree のソース置き場（git管理外）
 | 言語 | Python のみ | GELLO本体は純Python（C++はROS2版Franka用のみで無関係） |
 | D1との通信 | unitree_sdk2_python (cyclonedds) で DDS を直接 publish/subscribe | D1のメッセージ型(IDL)だけPythonに移植すれば済む |
 | 実装方針 | GELLOの `Robot` プロトコル（`gello/robots/robot.py`）を満たす `D1TRobot` を書く | 通信方式を変えても中身の差し替えだけで済む |
+| フィードバック周期 | **30Hz 固定周期**（D1 側を改造、[下記](#d1-t-上で行った変更)） | 元は約9Hz。30Hz ならシリアルバスの約1/3で済み、指令書き込みの余裕が残る。カメラ 30fps とも揃う |
+| 指令経路 | **direct**: `set_servo_angle` に `SetServoAngle_` ×7 を直接 publish（JSON の `rt/arm_Command` は使わない） | `marm_communication_node` を経由しない分、遅れが約15ms 小さい。`delay_ms` も指定できる |
+| 指令タイミング | **sync**: `current_servo_angle` を受けた直後に1回送る（= 30Hz） | D1 はシリアルの読み書きを排他していない。読み取り直後の空き時間に書けば衝突しない（「指令の実測」の節）。PC のタイマーで送ると約330ms のフィードバック停止が頻発した |
 
 `Robot` プロトコルで必要なメソッド: `num_dofs()`, `get_joint_state()`（rad, グリッパは0〜1）, `command_joint_state(q)`, `get_observations()`（`joint_positions`, `joint_velocities`, `ee_pos_quat`, `gripper_position`）。
 
+---
+
 ## D1-T について分かっていること
 
+### 接続
+
+| 項目 | 値 |
+|---|---|
+| D1-T の IP | `192.168.123.100` |
+| ログイン | `ssh ubuntu@192.168.123.100`（パスワードは別途共有） |
+| sudo | パスワード不要（`/etc/rc.local` で sudo に setuid を付けている） |
+| PC 側 | 同じ `192.168.123.0/24` に置く。Mac では `en10`（`192.168.123.111`） |
+| DDS | domain 0。D1 側は NIC 指定なしの `Init(0)`、PC 側は `ChannelFactoryInitialize(0, "<NIC名>")` |
+
 ### ハードウェア
-- 6DoF + グリッパ(J6) の計7サーボ
+- 6DoF + グリッパ(J6) の計7サーボ。**FashionStar の UART バスサーボ**（`/dev/ttyS4`, 115200bps, ID 0〜6）
 - インタフェース: RJ45 (DDS通信), Type-C (シリアルデバッグ), DC電源 24V
-- **内蔵Linuxボードあり**。SSHで入れて、ドライバソース `~/marm_code` が載っており、その場で `make` して作り直せる
+- 内蔵Linuxボード: 4コア, RAM 2GB。ドライバソース `~/marm_code` がありその場で `make` できる
 
 ### 内部サービス（systemd）
 
-`marm_communication` / `marm_control` / `marm_controller` / `marm_subscripber`
+4つとも `/etc/systemd/system/*.service`（`User=ubuntu`, `Restart=on-failure`）が `~/autoStart*.sh` を呼び、その中で `~/marm_code/build/<ノード>` を起動する。
 
-公式ドキュメントのトピック定義から推定した流れ:
-
-```
-PC ──rt/arm_Command (ArmString_, JSON)──▶ marm_communication_node   JSON解釈
-                                               │ set_servo_angle_control / arm_zero / set_servo_dumping
-                                               ▼
-                                          marm_control_node          補間・軌道生成（推定）
-                                               │ set_servo_angle (SetServoAngle_)
-                                               ▼
-                                          marm_controller_node       サーボバス駆動
-                                               │ current_servo_angle (PubServoInfo_)
-                                               ▼
-PC ◀──rt/arm_Feedback (ArmString_, JSON)── （フィードバック）
-```
-
-- `marm_subscripber` の役割は不明
-- 角度の単位は **度**（GELLOはrad → 変換が必要）
-
-### 通信の仕様（公式ドキュメントより）
-
-- 指令: `rt/arm_Command` に `ArmString_` の JSON。例: `{"seq":4,"address":1,"funcode":7}`（姿勢ゼロ点）
-- 状態(JSON): `arm_Feedback`, seq=10 固定, **10Hz**。address + funcode で種類を区別
-- 状態(生): `current_servo_angle` に `PubServoInfo_`（`servo0_data`〜`servo6_data`）。**周期は未確認**
-- NIC指定: `ChannelFactory::Instance()->Init(0, "eth0")`（Pythonなら `ChannelFactoryInitialize(0, "<NIC名>")`）
-- 公式のテレオペ構成あり（ハンドデバイス付きの「acquisition arm」側は既定サービスを止めて専用プログラムを動かす）
-
-### 未解決・要注意
-
-- ⚠️ **指令を何Hzまで受け付けるか不明**（最重要。GELLOは約100Hzで指令を出す）
-- ⚠️ `current_servo_angle` が10Hzより速いか不明
-- ⚠️ トピック名の食い違い: サンプルは `"arm_Feedback"` を購読、ドライバは `"rt/arm_Feedback"` を publish。
-  unitree_sdk2py（Python）は `rt/` を自動で付けないことをループバックで確認済み。C++ SDK 側の挙動は未確認なので、`probe_d1.py` で両方購読して確かめる
-- ⚠️ 全関節指令の JSON 形式（funcode / mode / フィールド名）は推測で書いている → `d1t_robot.py` の `_build_command()`
-- 販売店スペックには「SDKで1kHz更新」「遅延15ms以下」とあるが真偽不明
-
-## 制御周期が足りなかった場合の対策（軽い順）
-
-1. **ソフトで緩和**: 先読み指令（リーダー速度から約100ms先を予測）、delay_ms 調整、ローパス/デッドバンド
-2. **10Hzで割り切る**: Diffusion Policy 等は10Hzの事例が多い。GELLOの指令値（100Hz）を action として記録する
-3. **JSON層をバイパス**（本命）: `set_servo_angle` に `SetServoAngle_` を直接 publish。`marm_control_node` も同じトピックに出すので競合に注意。ソースがあるので10Hzの原因（ループ周期かサーボバス速度か）を特定できる
-4. フォロワーを変える（最終手段。リーダーはD1-T専用なので避けたい）
-
-## ロードマップ
-
-| Step | 内容 | 完了条件 |
-|---|---|---|
-| 0 | ✅ レポジトリ構成・環境構築・雛形（`D1TRobot`, `probe_d1.py`, `teleop.py`）。ループバックで DDS の送受信・変換・クリップを確認済み | — |
-| 1 | **D1調査・通信検証**: `marm_code` 読解、PythonからDDSで読み書き、周期・遅延の実測 | 指令周期の上限、フィードバック周期、使う経路（JSON or 直接）が決まる |
-| 2 | **リーダーのキャリブレーション**: `scripts/gello_get_offset.py`、7軸目はグリッパ | リーダー読み値がD1と同じ座標系・rad で出る |
-| 3 | **`D1TRobot` 実装**: rad↔deg、関節リミットでクリップ、1ステップ最大変化量制限、起動時のゆっくり同期、切断時停止 | dry-run（publishせずログのみ）→ 実機追従 |
-| 4 | データ収集: カメラ、保存形式（ACT / LeRobot 等） | — |
-
----
-
-## 明日の作業
-
-### 1. D1-T にログインする
+| サービス | 起動スクリプト | 実体 | 役割 |
+|---|---|---|---|
+| `marm_communication` | `autoStartCommunication.sh` | `marm_communication_node` | `rt/arm_Command` の JSON を解釈して下位トピックに流す。状態フラグを 10Hz で publish |
+| `marm_control` | `autoStartControl.sh` | `marm_control_node` | ゼロ点復帰（`arm_zero`）と、0.1°刻みで補間する `set_servo_angle_control` だけ担当。常時の publish はしない |
+| `marm_controller` | `autoStartController.sh` | `marm_controller_node` | サーボを直接駆動。`set_servo_angle` / `set_servo_dumping` を受けてシリアルに書き、7軸を読んで publish |
+| `marm_subscripber` | `autoStartSubscriber.sh` | `subscriber` | フィードバックを標準出力に表示するだけのデバッグ用 |
 
 ```bash
-# PCのNIC名を確認（D1-Tを繋いだ方）
-ip a
-
-# D1-TのIPを探す（Unitree製品は 192.168.123.x が多いが未確認）
-sudo nmap -sn 192.168.123.0/24
-
-ssh <user>@<D1-TのIP>
-```
-
-入れない場合は Type-C でシリアルコンソール:
-
-```bash
-sudo dmesg | tail          # /dev/ttyUSB* or /dev/ttyACM* を確認
-screen /dev/ttyUSB0 115200
-```
-
-### 2. バックアップ（書き換える前に必ず）
-
-```bash
-# D1-T上で
-tar czf ~/marm_code_backup_$(date +%Y%m%d).tar.gz ~/marm_code
 systemctl status marm_communication marm_control marm_controller marm_subscripber
+sudo systemctl restart marm_controller
 ```
 
-### 3. ソースをPCにコピー
+### トピックと流れ（ソースで確認済み）
 
-```bash
-# PC上で
-mkdir -p vendor
-scp -r <user>@<D1-TのIP>:~/marm_code vendor/
-scp <user>@<D1-TのIP>:~/marm_code_backup_*.tar.gz vendor/
+```mermaid
+flowchart LR
+    PC["PC"]
+    COMM["marm_communication_node"]
+    CTRL["marm_control_node"]
+    DRV["marm_controller_node"]
+    SERVO["サーボ ×7"]
+
+    PC -- "rt/arm_Command<br/>(ArmString_, JSON)" --> COMM
+    COMM -- "set_servo_angle (SetServoAngle_)<br/>funcode 1, 2" --> DRV
+    COMM -- "set_servo_dumping (SetServoDumping_)<br/>funcode 4, 5" --> DRV
+    COMM -- "arm_zero (ArmString_)<br/>funcode 7" --> CTRL
+    CTRL -- "set_servo_angle<br/>ゼロ点復帰時のみ" --> DRV
+    PC == "set_servo_angle (SetServoAngle_)<br/>直接 publish（採用: direct）" ==> DRV
+    DRV -- "UART" --> SERVO
+
+    DRV -. "current_servo_angle (PubServoInfo_)<br/>30Hz（改造後）" .-> PC
+    DRV -. "rt/arm_Feedback (ArmString_)<br/>address=2 funcode=1, 角度の JSON 版<br/>30Hz（改造後）" .-> PC
+    COMM -. "rt/arm_Feedback (ArmString_)<br/>address=2 funcode=3, 状態フラグ<br/>10Hz" .-> PC
 ```
 
-`vendor/` は Unitree のソースなので **gitにコミットしない**（`.gitignore` に追加済み）。
-SDKのzip（公式ガイド: https://support.unitree.com/home/zh/developer/D1Arm_services ）もあれば `vendor/` に置く。
+実線: 指令、太線: テレオペで使う経路、点線: フィードバック。
 
-### 4. ソースで確認すること
+- トピック名は C++ 側でも文字列そのまま（`rt/` の自動付与なし）。**フィードバックは `rt/arm_Feedback`**。公式サンプル（`subscriber.cpp`）の `arm_Feedback` には何も届かない（実測）
+- 角度の単位は **度**（GELLOはrad → 変換が必要）
+- funcode 3 の状態（`enable_status` / `power_status` / `error_status`）は `marm_communication_node` 内のフラグを流しているだけで、サーボの実状態ではない。`error_status` は常に 0
 
-- [ ] `marm_controller_node.cpp` のループ周期（`sleep` / `usleep` / Hz の値）とサーボバスの種類・ボーレート
-- [ ] `current_servo_angle` の publish 周期
-- [ ] `marm_control_node` が `set_servo_angle` を常時 publish しているか（直接指令と競合するか）
-- [ ] JSON の funcode 一覧（有効化、全関節指令、delay_ms、グリッパ）
-- [ ] IDL / 生成 `.hpp`: `ArmString_`, `PubServoInfo_`, `SetServoAngle_`, `SetServoDumping_` のフィールド定義（Python移植用）
+### DDS の型（`vendor/marm_code/src/msg/*.hpp`）
 
-目安のgrep:
+型名はすべて `unitree_arm::msg::dds_::<名前>`。
 
-```bash
-grep -rnE "sleep|Hz|rate|baud|ttyS|ttyUSB|ttyACM" vendor/marm_code/src
-find vendor/marm_code -name "*.idl" -o -name "*_.hpp"
-```
+| 型 | フィールド | 用途 |
+|---|---|---|
+| `ArmString_` | `string data` | JSON 指令・フィードバック |
+| `PubServoInfo_` | `float32 servo0_data` 〜 `servo6_data` | 7軸の現在角 [deg] |
+| `SetServoAngle_` | `int32 seq, uint8 id, float32 angle, int16 delay_ms` | 1軸の角度指令 |
+| `SetServoDumping_` | `int32 seq, uint8 id, uint16 power` | 1軸のダンピング（脱力） |
 
-IDL の型が `d1t_teleop/msg.py` と違ったら直す（特に `PubServoInfo_` が float32 か double か）。型が合わないと DDS は**エラーを出さずに何も届かない**。
+`d1t_teleop/msg.py` の `ArmString_` / `PubServoInfo_` は一致（実機で受信確認済み）。`SetServoAngle_` / `SetServoDumping_` は未移植。
 
-### 5. PCから状態を読む（読み取り専用なので安全）
+### JSON 指令（`rt/arm_Command`, address=1）
 
-```bash
-uv run python scripts/probe_d1.py --nic <D1を繋いだNIC名>
-```
+[marm_communication_node.cpp](vendor/marm_code/src/marm_communication_node.cpp) の `subArmCommand_callback()` より。
 
-- [ ] `current_servo_angle` が届くか、何Hzか（← 10Hzより速ければ嬉しい）
-- [ ] `arm_Feedback` と `rt/arm_Feedback` のどちらに届くか
-- [ ] 何も届かない → NIC名 / IPの同一サブネット / `msg.py` の型 を疑う
+| funcode | data | 動作 |
+|---|---|---|
+| 1 | `id, angle, delay_ms` | 1軸の角度指令 |
+| 2 | `angle0`〜`angle6`, `mode` | 全軸の角度指令。`mode=0`: 各軸 `delay_ms=40` 固定で即 publish。`mode=1`: 移動量から `delay_ms`（約67ms/度）を計算し、**その時間だけ受信コールバック内で sleep する**（その間は次の指令を受けない） |
+| 3 | `pose_x/y/z, roll/pitch/yaw` | 受信応答を返すだけで何もしない（未実装） |
+| 4 | `id, mode` | 1軸のダンピング（`mode` = power。<1000 で enable_status=0） |
+| 5 | `mode` | 全軸のダンピング |
+| 6 | `power` | 表示してフラグを立てるだけ |
+| 7 | なし | ゼロ点復帰（全軸 0° へ 6000ms かけて移動） |
 
-### 6. GELLO リーダーのキャリブレーション（D1 と独立に進められる）
+- **テレオペは funcode 2 の `mode=0`**（または `set_servo_angle` の直接 publish）を使う
+- JSON のキーが欠けると rapidjson が assert で落ちる可能性がある → 必ず全キーを入れる
 
-1. D1-T の既知の姿勢（全関節0°など）と同じ姿勢に GELLO を置く
-2. オフセット計算:
-   ```bash
-   ls /dev/serial/by-id/
-   uv run python third_party/gello_software/scripts/gello_get_offset.py \
-       --port /dev/serial/by-id/<...> \
-       --start-joints 0 0 0 0 0 0 \
-       --joint-signs 1 1 1 1 1 1
-   ```
-   `joint_signs` は各関節を動かして D1 と回転方向が逆なら -1
-3. 出力を `d1t_teleop/config.py` の `LEADER_CONFIG` に書く（グリッパの開/閉の角度も）
-4. リーダー単体で確認: `uv run python scripts/teleop.py --gello-port /dev/serial/by-id/<...>`
-   → 表示される角度が D1 の関節角の定義と一致するか
+### `marm_controller_node` 側の処理（[marm_controller_node.cpp](vendor/marm_code/src/marm_controller_node.cpp) `subServoAngle_callback()`）
 
-### 7. 指令の検証（Claudeと一緒に）
+- 関節リミットでクリップ: J0 ±135, J1 ±90, J2 ±90, J3 ±135, J4 ±90, J5 ±135, **J6（グリッパ）-20〜50** [deg]
+- 受け取った `delay_ms` と移動量から、角速度（上限約115°/s）・角加速度（上限約72°/s²）を計算し、サーボへの移動時間を決め直す
+- 現在角が ±180° を外れていたらダンピングに切り替え
+- 読み取り（タイマースレッド）と書き込み（DDS コールバック）が**排他なしで同じシリアルポートを使う**
 
-`_build_command()` の JSON 形式を SDK ドキュメントで確定させてから:
+### 周期（実測, Mac → D1, 指令なし）
 
-- [ ] dry-run: `uv run python scripts/teleop.py --gello-port ... --nic ... --use-d1`（送信はしない、出す予定の JSON を表示）
-- [ ] 実送信は小さい角度・1関節から。`rt/arm_Command`（JSON）と `set_servo_angle`（直接）を 10 / 30 / 50 / 100Hz で送り、追従性・遅延を比較（計測スクリプトは未作成）
+| 構成 | `current_servo_angle` | 受信間隔 | `marm_controller_node` CPU |
+|---|---|---|---|
+| 元（100ms sleep → 読み取り） | 9.00 Hz | 平均 111ms | 35% |
+| 10ms sleep | 47.7 Hz | 平均 21.0ms（19.4〜23.4） | 71% |
+| **33ms 固定周期（現在）** | **30.34 Hz** | 中央値 33.0ms、99% が 31.8〜33.9ms | 44% |
 
-⚠️ 実機を動かすときは、小さい角度・1関節ずつ・非常停止（電源）に手が届く状態で。
+- 7軸の読み取りに約 11ms（1軸約 1.6ms。6+8 バイトの往復 @115200bps）
+- CPU が高いのはシリアル受信待ちがビジーループのためと思われる
 
 ---
+
+## D1-T 上で行った変更
+
+**D1 上の `~/marm_code` は元のソースから変更済み。**（`vendor/marm_code` は変更前の元ソース）
+
+1. `CMakeLists.txt` 17行目の `add_executable(test ...)` をコメントアウト（`src/test.cpp` が存在せず cmake が失敗するため）
+2. `src/marm_controller_node.cpp`: フィードバックを 30Hz 固定周期に（2026-09-30）
+
+```diff
+@@ class Timer_ / start()
+             timer_thread_ = std::thread([this]() {
++                // Fixed-rate: wait until the next tick instead of sleeping a fixed time after the callback.
++                auto next = std::chrono::steady_clock::now();
+                 while (running_) {
+-                    std::this_thread::sleep_for(std::chrono::milliseconds(interval_));
++                    next += std::chrono::milliseconds(interval_);
++                    auto now = std::chrono::steady_clock::now();
++                    if (next < now) {
++                        next = now;  // overran: don't try to catch up
++                    }
++                    std::this_thread::sleep_until(next);
+                     if (callback_ != nullptr) {
+                         callback_();
+                     }
+@@ main()
+-    Timer_ timer(pubServoAngle_callback, 100);
++    Timer_ timer(pubServoAngle_callback, 33);
+```
+
+元に戻す: `vendor/marm_code/src/marm_controller_node.cpp`（元ソース）を D1 に戻して再ビルド、または `vendor/marm_code/build/marm_controller_node`（元バイナリ, md5 `7d6d5522e3d997841e1accb52691aef1`）を `~/marm_code/build/` に上書きして再起動。
+
+### D1-T 上でビルドする手順
+
+```bash
+# 1. PC から D1 の時計を合わせる（ずれていると make がリンクを飛ばし、変更が反映されない）
+ssh ubuntu@192.168.123.100 "sudo date -u -s '$(date -u '+%Y-%m-%d %H:%M:%S')'"
+
+# 2. D1 上で（build/ は root 所有なので sudo）
+cd ~/marm_code/build
+sudo make marm_controller_node     # 出力に "Linking CXX executable" が出ることを確認
+sudo systemctl restart marm_controller
+
+# 3. PC から周期を確認
+uv run python scripts/probe_d1.py --nic en10 --duration 10 --interval 5
+```
+
+---
+
+### 指令の実測（J0, -10〜10°, 5°/s）
+
+`scripts/cmd_test.py --joint 0 --waypoints -10 10 --speed-deg 5 --live`。ログは `logs/`。
+
+| | JSON, PC タイマー 30Hz | direct, PC タイマー 30Hz | **direct + sync（採用）** |
+|---|---|---|---|
+| フィードバック受信→送信（中央値） | 12.2 ms | 13.4 ms | **0.4 ms** |
+| 指令中のフィードバック | 24.5 Hz | 25.7 Hz | **30.3 Hz** |
+| 受信間隔の最大 | 427 ms | 332 ms | **34.4 ms** |
+| 50ms 超の途切れ | 8回 | 9回 | **0回** |
+| 遅れ | 165 ms | 150 ms | **140 ms** |
+| 遅れ補正後の誤差 RMS | 0.33° | 0.30° | **0.17°** |
+| 誤差の最大 | 2.91° | 2.43° | **1.02°** |
+
+- 途切れはほぼ全部約330ms（= 33ms + サーボ応答のタイムアウト 100ms × 3）。読み取り中に書き込みが割り込んでいた
+- 残る約140ms の遅れは D1 側（`marm_controller_node` の移動時間計算とサーボ応答）。PC 側では縮まらない
+
+## 未解決・要注意
+
+- 遅れ約140ms。詰めるなら `delay_ms`（既定 33）を変えて影響を見る
+- sync は衝突の確率を下げるだけで、保証はしない（ネットワーク遅延が大きく揺れれば衝突しうる）。根本対策は `marm_controller_node` のシリアルアクセスに mutex を入れること
+- グリッパ J6: 手では 70（開）〜-23.8°（閉）動くが、`marm_controller_node` のクリップで指令は -20〜50° に制限される。広げるなら D1 側の `maxangle[6]` / `minangle[6]`
+- リーダーや DDS が途切れたときの停止処理はない（D1 は最後の指令位置で保持）
+- 販売店スペックの「SDKで1kHz更新」「遅延15ms以下」は、このドライバ構成では当てはまらない（フィードバックは元 9Hz）
 
 ## 参考
 

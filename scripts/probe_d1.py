@@ -2,24 +2,27 @@
 
 Never publishes anything, so it is safe to run while the arm is powered.
 
-    uv run python scripts/probe_d1.py --nic enp3s0
+    uv run python scripts/probe_d1.py --nic en10
+
+rt/arm_Feedback carries several message kinds (servo angles from
+marm_controller_node, arm status from marm_communication_node, ...), so it is
+reported per (address, funcode).
 """
 
+import json
 import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 
+import numpy as np
 import tyro
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
 
 from d1t_teleop.msg import ArmString_, PubServoInfo_
 
-# The official sample subscribes "arm_Feedback" while the driver publishes
-# "rt/arm_Feedback", so listen on both.
 TOPICS = {
     "current_servo_angle": PubServoInfo_,
-    "arm_Feedback": ArmString_,
     "rt/arm_Feedback": ArmString_,
 }
 
@@ -30,20 +33,44 @@ class Args:
     domain_id: int = 0
     duration: float = 0.0
     """Seconds to run (0 = until Ctrl-C)."""
+    interval: float = 2.0
+    """Seconds between reports."""
+
+
+def _key(topic: str, msg) -> str:
+    if isinstance(msg, ArmString_):
+        try:
+            d = json.loads(msg.data)
+            return f"{topic} a={d.get('address')} f={d.get('funcode')}"
+        except (json.JSONDecodeError, AttributeError):
+            return f"{topic} (non-json)"
+    return topic
+
+
+def _stats(stamps: list) -> str:
+    if len(stamps) < 2:
+        return f"n={len(stamps):3d}"
+    dt = np.diff(stamps) * 1000.0
+    return (
+        f"n={len(stamps):3d} {1000.0 / dt.mean():6.2f} Hz  "
+        f"dt mean {dt.mean():6.1f} / min {dt.min():6.1f} / max {dt.max():6.1f} ms"
+    )
 
 
 def main(args: Args) -> None:
     ChannelFactoryInitialize(args.domain_id, args.nic)
 
     lock = threading.Lock()
-    counts = defaultdict(int)
+    stamps = defaultdict(list)
     last = {}
 
     def make_handler(topic):
         def handler(msg):
+            now = time.perf_counter()
+            key = _key(topic, msg)
             with lock:
-                counts[topic] += 1
-                last[topic] = msg
+                stamps[key].append(now)
+                last[key] = msg
 
         return handler
 
@@ -57,22 +84,23 @@ def main(args: Args) -> None:
     start = time.time()
     try:
         while args.duration <= 0 or time.time() - start < args.duration:
-            time.sleep(1.0)
+            time.sleep(args.interval)
             with lock:
-                snapshot = dict(counts)
-                counts.clear()
+                snapshot = {k: v[:] for k, v in stamps.items()}
+                for v in stamps.values():
+                    del v[:-1]  # keep the last stamp so the next window has no gap
                 latest = dict(last)
             print(f"--- t={time.time() - start:5.1f}s")
-            for topic in TOPICS:
-                hz = snapshot.get(topic, 0)
-                msg = latest.get(topic)
-                if msg is None:
-                    body = "(nothing received)"
-                elif isinstance(msg, PubServoInfo_):
+            if not snapshot:
+                print("  (nothing received)")
+            for key in sorted(snapshot):
+                msg = latest[key]
+                if isinstance(msg, PubServoInfo_):
                     body = " ".join(f"{a:7.2f}" for a in msg.as_list())
                 else:
-                    body = msg.data[:120]
-                print(f"{topic:>20s} {hz:4d} Hz  {body}")
+                    body = msg.data[:100]
+                print(f"  {key:<28s} {_stats(snapshot[key])}")
+                print(f"  {'':<28s} {body}")
     except KeyboardInterrupt:
         pass
 

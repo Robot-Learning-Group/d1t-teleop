@@ -1,9 +1,9 @@
 """D1 arm DDS message types, ported to Python (cyclonedds).
 
-TODO(verify): Field names/types are reconstructed from the official C++ samples
-(`pm->data_()`, `pm->servo0_data_()` ...). Check them against the IDL / generated
-.hpp in the D1 SDK zip or `marm_code/src/msg/`. If a type does not match exactly,
-DDS silently never delivers any data (the reader just doesn't match the writer).
+Ported from the generated headers in `marm_code/src/msg/*.hpp`. If a type does
+not match exactly, DDS silently never delivers any data (the reader just doesn't
+match the writer). ArmString_ / PubServoInfo_ / SetServoAngle_ are confirmed on the
+real arm.
 """
 
 from dataclasses import dataclass
@@ -28,7 +28,6 @@ class ArmString_(idl.IdlStruct, typename="unitree_arm.msg.dds_.ArmString_"):
 class PubServoInfo_(idl.IdlStruct, typename="unitree_arm.msg.dds_.PubServoInfo_"):
     """Raw servo angles [deg], J0..J6 (J6 = gripper). Topic: current_servo_angle."""
 
-    # TODO(verify): float32 vs float64
     servo0_data: types.float32
     servo1_data: types.float32
     servo2_data: types.float32
@@ -47,3 +46,26 @@ class PubServoInfo_(idl.IdlStruct, typename="unitree_arm.msg.dds_.PubServoInfo_"
             self.servo5_data,
             self.servo6_data,
         ]
+
+
+@dataclass
+@annotate.final
+@annotate.autoid("sequential")
+class SetServoAngle_(idl.IdlStruct, typename="unitree_arm.msg.dds_.SetServoAngle_"):
+    """Single-joint angle command [deg]. Topic: set_servo_angle (read by marm_controller_node)."""
+
+    seq: types.int32
+    id: types.uint8
+    angle: types.float32
+    delay_ms: types.int16
+
+
+@dataclass
+@annotate.final
+@annotate.autoid("sequential")
+class SetServoDumping_(idl.IdlStruct, typename="unitree_arm.msg.dds_.SetServoDumping_"):
+    """Single-joint damping (limp) command. Topic: set_servo_dumping."""
+
+    seq: types.int32
+    id: types.uint8
+    power: types.uint16
