@@ -11,11 +11,13 @@ from gello.agents.gello_agent import DynamixelRobotConfig
 
 # --- GELLO leader -----------------------------------------------------------
 # Our leader's Dynamixel IDs start at 0 (J0..J5 = 0..5, gripper = 6).
-# Offsets from scripts/leader_offset.py in the D1 default pose (0, -90, 90, 0, 0, 0),
-# residual <= 2.4 deg (2026-09-30).
+# Offsets from scripts/leader_offset.py in the D1 stow pose (68.5, -89.4, 90.4, 0.1, 0.4, 0.1),
+# residual <= 21.7 deg (2026-10-01). Re-run after the leader's power is cycled: its multi-turn
+# encoder count can reset, which shifts these offsets by whole turns (seen 2026-10-01: J0 by
+# 1.25 turns, J2 by 1 turn after a power cycle, from the 2026-09-30 values).
 LEADER_CONFIG = DynamixelRobotConfig(
     joint_ids=(0, 1, 2, 3, 4, 5),
-    joint_offsets=(0 * np.pi / 2, -1 * np.pi / 2, 1 * np.pi / 2, 4 * np.pi / 2, 4 * np.pi / 2, 4 * np.pi / 2),
+    joint_offsets=(5 * np.pi / 2, -1 * np.pi / 2, 5 * np.pi / 2, 4 * np.pi / 2, 4 * np.pi / 2, 4 * np.pi / 2),
     joint_signs=(-1, -1, -1, -1, -1, -1),  # checked with scripts/compare_live.py (gripper: +1)
     # (gripper dynamixel id, leader raw open [deg], leader raw closed [deg])
     gripper_config=(6, 28.0, -33.8),
